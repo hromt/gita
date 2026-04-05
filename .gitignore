@@ -10,3 +10,9 @@
 app/build
 *.apk
 *.aab
+
+# Spring Boot (backend/)
+backend/build/
+backend/target/
+backend/.gradle/
+backend/data/
