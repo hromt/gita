@@ -1,53 +1,79 @@
-name: Build and deploy JAR app to Azure Web App - gita-api
+# Deploy Spring Boot API from backend/ to Azure App Service (gita-api).
+# Uses publish profile auth — set repo secret AZURE_WEBAPP_PUBLISH_PROFILE.
+
+name: Deploy gita-api to Azure App Service
 
 on:
   push:
     branches:
       - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/main_gita-api.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-deploy-gita-api
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Build Spring Boot (Gradle)
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: backend
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Java version
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'microsoft'
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      - name: Grant execute permission for gradlew
+        run: chmod +x backend/gradlew
 
       - name: Build with Gradle
-        run: ./gradlew clean build
+        working-directory: backend
+        run: ./gradlew clean build --no-daemon
 
-      - name: Upload artifact for deployment job
+      - name: Stage executable Spring Boot JAR (exclude *-plain.jar)
+        run: |
+          mkdir -p deploy
+          JAR="$(find backend/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' | head -n 1)"
+          if [ -z "$JAR" ]; then
+            echo "::error::No executable Spring Boot jar found (expected one jar other than *-plain.jar)"
+            ls -la backend/build/libs/ || true
+            exit 1
+          fi
+          echo "Using: $JAR"
+          cp "$JAR" deploy/gita-api.jar
+          ls -la deploy/
+
+      - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: java-app
-          path: backend/build/libs/*.jar
+          name: gita-api-jar
+          path: deploy/gita-api.jar
+          if-no-files-found: error
 
   deploy:
-    runs-on: ubuntu-latest
+    name: Deploy to Azure
     needs: build
-  
+    runs-on: ubuntu-latest
     steps:
-      - name: Download artifact from build job
+      - name: Download JAR artifact
         uses: actions/download-artifact@v4
         with:
-          name: java-app
-  
+          name: gita-api-jar
+          path: deploy
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'gita-api'
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: '*.jar'
+          package: deploy/gita-api.jar
